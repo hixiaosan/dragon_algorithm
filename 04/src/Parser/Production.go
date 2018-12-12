@@ -190,12 +190,18 @@ type MultProduction struct {
 	pros []*Production
 }
 
-// 左递归移除算法
-func RemoveRecursive(pros []*Production) []*Production {
+// 简化产生式
+func SimpleProduction(pros []*Production) []*Production {
+	result := make([]*Production, 0)
+	
+	return result
+}
 
+// 组合产生式，组合具有相同左部的产生式
+func GroupProduction(pros []*Production) []*MultProduction {
 	group := make(map[string][]*Production)
 	multPro := make([]*MultProduction, 0)
-	result := make([]*Production, 0)
+	
 	fmt.Println(len(pros))
 	for i := 0; i < len(pros); i++ {
 		if _, ok := group[pros[i].header]; !ok {
@@ -210,6 +216,14 @@ func RemoveRecursive(pros []*Production) []*Production {
 		mp := &MultProduction{header: k, pros: v}
 		multPro = append(multPro, mp)
 	}
+	return multPro
+}
+
+// 左递归移除算法
+func RemoveRecursive(pros []*Production) []*Production {
+
+	result := make([]*Production, 0)
+	multPro := GroupProduction(pros)
 
 	for i := 0; i < len(multPro); i++ {
 		for j := 0; j < i; j++ {
@@ -305,6 +319,193 @@ func RemoveRecursive(pros []*Production) []*Production {
 		result = append(result, pro)
 
 	}
+
+	return result
+
+	//return SimpleProduction(result)
+}
+
+type Tree struct {
+	Root *Node
+}
+
+type Node struct {
+	Child []*Node  // 子节点
+	Pros []*Production	   // 产生式索引
+	Sym  Symbolic // 当前符号
+}
+
+// 生成分析树
+func InitProductionTree(parent *Node, pros []*Production, idx int) {
+
+	fmt.Println("InitProductionTree")
+	groupPros := make(map[Symbolic][]*Production)
+
+	for i := 0; i < len(pros); i++ {
+		if len(pros[i].body) > idx {
+			sym := *pros[i].body[idx]
+			if _, ok := groupPros[sym]; !ok {
+				groupPros[sym] = make([]*Production, 0);
+			}
+
+			groupPros[sym] = append(groupPros[sym], pros[i])
+		}
+	}
+
+	for k, v := range groupPros {
+		fmt.Println(k)
+		if len(v) > 1 { // 重复前缀大于 1个的 加入子节点
+	
+			child := &Node{Child: make([]*Node, 0), Pros:v, Sym: k}
+			parent.Child = append(parent.Child, child)
+
+			InitProductionTree(child, groupPros[k], idx + 1)
+		}
+	}
+	fmt.Println(len(parent.Child))
+
+
+}
+
+
+
+// 提取左部公因子
+func TakeCommonLeft(pros [] *Production) ([]*Production) {
+	result := make([]*Production, 0)
+	multPro := GroupProduction(pros)
+	
+	
+	for i := 0; i < len(multPro);  {
+		pro := multPro[i]
+		var tree Tree
+		tree.Root = &Node{Child: make([]*Node, 0)}
+
+		fmt.Println("LOOP: ---------------------", i)
+		InitProductionTree(tree.Root, pro.pros, 0)
+		if len(tree.Root.Child) == 0 { // 没有公共前缀
+			i++
+			
+			continue
+		}
+
+		// 有公共前缀的处理
+		root := tree.Root
+		last := root
+		var deep int  = 0 // 层次
+		preSymbolic := make([]Symbolic, 0)
+		for  {
+			if len(root.Child) == 1 { // 前缀全部相同, 进入下一层
+				last = root
+				root = root.Child[0]
+				preSymbolic = append(preSymbolic, root.Sym) // 前缀符号
+				deep++
+				continue
+			}
+
+			if len(root.Child) > 1 || (len(root.Child) == 0 && deep != 0) {
+				
+				// 前缀不是全部相同
+
+				nmPros := &MultProduction{header: pro.header + "`", pros: make([]*Production, 0)} // 新的产生式集合
+				fmt.Println("----------------------,", len(root.Child), deep)
+				
+				if deep != 0 { // 不是第一层
+					newProc := &Production{header: pro.header}
+
+					for _, sym := range preSymbolic {
+						newProc.body = append(newProc.body, &Symbolic{sym_type: sym.sym_type, sym: sym.sym})
+					}
+
+					newProc.body = append(newProc.body, &Symbolic{sym_type: SYM_TYPE_N_TERMINAL, sym: newProc.header + "`"})
+
+					newPros := make([]*Production, 0)
+
+					root = last // 回到上一层
+					newPros = append(newPros, newProc)
+
+					for _, pro := range multPro[i].pros {
+						NTProc := &Production{header: pro.header + "`", body: make([]*Symbolic, 0)}
+						fmt.Println(pro.header, pro.body[0])
+						NTProc.body = append(NTProc.body, pro.body[deep:]...)
+						nmPros.pros = append(nmPros.pros, NTProc)
+					}
+
+					multPro[i].pros = newPros
+				} else { // 第一层
+
+					for _, c := range root.Child {
+						preSymbolic = preSymbolic[0:0]
+						preSymbolic = append(preSymbolic, c.Sym) // 前缀符号
+
+						newProc := &Production{header: pro.header}
+
+						for _, sym := range preSymbolic {
+							newProc.body = append(newProc.body, &Symbolic{sym_type: sym.sym_type, sym: sym.sym})
+						}
+
+						newProc.body = append(newProc.body, &Symbolic{sym_type: SYM_TYPE_N_TERMINAL, sym: newProc.header + "`"})
+
+						newPros := make([]*Production, 0)
+
+						for _, org_pro := range multPro[i].pros {
+							find := false
+							for _, del := range c.Pros {
+		
+								if del == org_pro {
+									find = true
+									NTProc := &Production{header: pro.header + "`", body: make([]*Symbolic, 0)}
+									NTProc.body = append(NTProc.body, del.body[1:]...)
+
+									// 防止符号重复
+									exists := false
+									f:for _, pro := range nmPros.pros {
+										if len(pro.body) != len(NTProc.body) {
+											continue
+										}
+
+										for _t := 0; _t < len(pro.body); _t++ {
+											if *pro.body[_t] != *NTProc.body[_t] {
+												break 
+											}
+
+											if _t + 1 == len(pro.body) {
+												exists = true
+												break f
+											}
+										}
+									}
+
+									if false == exists {
+										nmPros.pros = append(nmPros.pros, NTProc)
+									}
+									break
+								}
+							}
+
+							if find == false {
+								newPros = append(newPros, org_pro)
+							}
+						}
+
+						newPros = append(newPros, newProc)
+						multPro[i].pros = newPros
+					}
+					
+				}
+
+				multPro = append(multPro, nmPros)
+				break
+			}
+			
+
+		}
+	}
+
+
+	for i := 0; i < len(multPro);  i++ {
+		result = append(result, multPro[i].pros...)
+	}
+
 
 	return result
 }
