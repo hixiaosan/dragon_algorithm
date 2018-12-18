@@ -145,7 +145,7 @@ func GetProdction(grammar string, tset []string) ([]*Production) {
 				i = i + match_len - 1
 				production.body = append(production.body, &Symbolic{sym_type: SYM_TYPE_N_TERMINAL, sym: NTS})
 			} else if (data[i] == '@') {
-				production.body = append(production.body, &Symbolic{sym_type: SYM_TYPE_NIL})
+				production.body = append(production.body, &Symbolic{sym_type: SYM_TYPE_NIL, sym: "@"})
 			} else {
 
 				TS := ""
@@ -338,7 +338,6 @@ type Node struct {
 // 生成分析树
 func InitProductionTree(parent *Node, pros []*Production, idx int) {
 
-	fmt.Println("InitProductionTree")
 	groupPros := make(map[Symbolic][]*Production)
 
 	for i := 0; i < len(pros); i++ {
@@ -353,7 +352,6 @@ func InitProductionTree(parent *Node, pros []*Production, idx int) {
 	}
 
 	for k, v := range groupPros {
-		fmt.Println(k)
 		if len(v) > 1 { // 重复前缀大于 1个的 加入子节点
 	
 			child := &Node{Child: make([]*Node, 0), Pros:v, Sym: k}
@@ -362,8 +360,6 @@ func InitProductionTree(parent *Node, pros []*Production, idx int) {
 			InitProductionTree(child, groupPros[k], idx + 1)
 		}
 	}
-	fmt.Println(len(parent.Child))
-
 
 }
 
@@ -380,7 +376,6 @@ func TakeCommonLeft(pros [] *Production) ([]*Production) {
 		var tree Tree
 		tree.Root = &Node{Child: make([]*Node, 0)}
 
-		fmt.Println("LOOP: ---------------------", i)
 		InitProductionTree(tree.Root, pro.pros, 0)
 		if len(tree.Root.Child) == 0 { // 没有公共前缀
 			i++
@@ -407,7 +402,6 @@ func TakeCommonLeft(pros [] *Production) ([]*Production) {
 				// 前缀不是全部相同
 
 				nmPros := &MultProduction{header: pro.header + "`", pros: make([]*Production, 0)} // 新的产生式集合
-				fmt.Println("----------------------,", len(root.Child), deep)
 				
 				if deep != 0 { // 不是第一层
 					newProc := &Production{header: pro.header}
@@ -506,6 +500,134 @@ func TakeCommonLeft(pros [] *Production) ([]*Production) {
 		result = append(result, multPro[i].pros...)
 	}
 
+
+	return result
+}
+
+// 提取First集合
+func First(cfg []*Production, sym *Symbolic) map[string] *Symbolic {
+	result := make(map[string] *Symbolic)
+
+	// 规则一 如果符号是一个终结符号，那么他的FIRST集合就是它自身
+	if sym.SymType() == SYM_TYPE_TERMINAL || sym.SymType() == SYM_TYPE_NIL {
+		result[sym.Sym()] = sym
+		return result
+	}
+
+	// 规则二 如果一个符号是一个非终结符号
+	// (1) A -> XYZ 如果 X 可以推导出nil 那么就去查看Y是否可以推导出nil
+	//              如果 Y 推导不出nil，那么把Y的First集合加入到A的First集合
+	//				如果 Y 不能推导出nil，那么继续推导 Z 是否可以推导出nil,依次类推
+	// (2) A -> XYZ 如果XYZ 都可以推导出 nil, 那么说明A这个产生式有可能就是nil， 这个时候我们就把nil加入到FIRST(A)中
+
+	for _, production := range cfg { 
+
+		if production.header == sym.Sym() {
+
+			nilCount := 0
+			for _, rightSymbolic := range production.body { // 对于一个产生式
+				ret := First(cfg, rightSymbolic) // 获取这个产生式体的First集合
+				hasNil := false
+				for k, v := range ret {
+					if v.SymType() == SYM_TYPE_NIL { // 如果推导出nil, 标识当前产生式体的符号可以推导出nil
+						hasNil = true
+					} else {
+						result[k] = v
+					}
+				}
+
+				if false == hasNil {  // 当前符号不能推导出nil, 那么这个产生式的FIRST就计算结束了，开始计算下一个产生式
+					break
+				} 
+
+				// 当前符号可以推导出nil，那么开始推导下一个符号
+				nilCount++
+
+				if nilCount == len(production.body) { // 如果产生式体都可以推导出nil，那么这个产生式就可以推导出nil
+					result["@"] = &Symbolic{sym: "@", sym_type: SYM_TYPE_NIL}
+				}
+
+			}
+
+
+
+		}
+
+	}
+
+	return result
+}
+
+// 提取FOLLOW集合
+func Follow(cfg []*Production, sym string) [] *Symbolic {
+	fmt.Printf("Follow ------> %s\n", sym)
+	result := make([] *Symbolic, 0)
+
+	// 一个文法符号的FOLLOW集就是 可能出现在这个文法符号后面的终结符
+	// 比如 S->ABaD, 那么FOLLOW(B)的值就是a。 
+	//		            FOLLOW(A)的值包含了FIRST(B)中除了ε以外的所有终结符,如果First(B)包含空的话。说明跟在B后面的终结符号就可以跟在A后面，这时我们要把FOLLOW(B)的值也添加到FOLLOW(A)中
+	//                  因为D是文法符号S的最右符号，那么所有跟在S后面的符号必定跟在D后面。所以FOLLOW(S)所有的值都在FOLLOW(D)中
+	// 					以下是书中的总结
+
+	// 不断应用下面这两个规则，直到没有新的FOLLOW集 被加入
+	// 规则一: FOLLOW(S)中加入$, S是文法开始符号
+	// 规则二: A->CBY FOLLOW(B) 就是FIRST(Y)
+	// 规则三: A->CB 或者 A->CBZ(Z可以推导出ε) 所有FOLLOW(A)的符号都在FOLLOW(B), 
+	//        
+
+	if sym == "S" { // 如果是文法的开始符号
+		result = append(result, &Symbolic{sym: "$", sym_type: SYM_TYPE_TERMINAL})
+	}
+
+	for _, pro := range cfg {
+		for idx, p_r_sym := range pro.body {
+			if p_r_sym.Sym() == sym { // 寻找到这个符号
+				if idx + 1 == len(pro.body) { // 是文法最右部的符号
+
+					if pro.header == p_r_sym.Sym() {
+						continue
+					}
+
+					ret := Follow(cfg, pro.header) // 获取产生式头的FOLLOW集合
+					result = append(result, ret...)
+					continue
+				}
+
+				firstSet := First(cfg, pro.body[idx + 1]) // 获取下一个First集合
+
+				hasNil := false
+				for _, first := range firstSet {
+					fmt.Printf("first -> %s\n", first.Sym())
+					if first.SymType() == SYM_TYPE_NIL {
+						hasNil = true
+						continue
+					}
+
+					result = append(result, first) // 添加Follow集合
+				}
+
+				if hasNil { // 如果下一个符号包含空串 那么要在获取下一个的符号的Follow集合
+					nextFollow := Follow(cfg, pro.body[idx + 1].Sym())
+					result = append(result, nextFollow...)
+					continue
+				}
+			}
+		}
+		
+	}
+
+	unique := make(map[string]*Symbolic)
+
+	for _, sym := range result {
+		if _, ok := unique[sym.Sym()]; !ok {
+			unique[sym.Sym()] = sym
+		}
+	}
+
+	result = make([]*Symbolic, 0)
+	for _, sym := range unique {
+		result = append(result, sym)
+	}
 
 	return result
 }
