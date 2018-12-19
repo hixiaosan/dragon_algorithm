@@ -135,6 +135,11 @@ func TestFollow() {
 
 }
 
+func TestLL1() {
+	ll1 := &parser.LL1{}
+	ll1.Init()
+}
+
 func main() {
 	// inputReader := bufio.NewReader(os.Stdin)
 	// exp, _ := inputReader.ReadString('\n')
@@ -149,5 +154,6 @@ func main() {
 
 	// TestTakeCommonLeft()
 
-	TestFollow()
+	// TestFollow()
+	TestLL1()
 }
